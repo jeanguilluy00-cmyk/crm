@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM — Contacts</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <style id="sharedStyle"></style>
+  <style>
+    .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    .page-header h2 { font-size: 20px; font-weight: 700; }
+    .table-wrap { overflow-x: auto; }
+    .actions { display: flex; gap: 8px; }
+    .import-zone { border: 2px dashed var(--border); border-radius: 12px; padding: 32px; text-align: center; cursor: pointer; transition: all 0.15s; margin-bottom: 24px; }
+    .import-zone:hover { border-color: var(--primary); background: #F5F3FF; }
+    .import-zone .import-icon { font-size: 36px; margin-bottom: 10px; }
+    .import-zone p { font-size: 14px; color: var(--muted); }
+    .import-zone strong { color: var(--primary); }
+    #fileInput { display: none; }
+    .contact-link { color: var(--primary); text-decoration: none; font-size: 13px; }
+    .contact-link:hover { text-decoration: underline; }
+    .assigned-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; background: #FEF3C7; color: #92400E; }
+  </style>
+</head>
+<body>
+  <div id="sidebarContainer"></div>
+  <div class="main">
+    <div class="topbar">
+      <span class="topbar-title">Contacts</span>
+      <button class="notif-btn" onclick="window.location.href='relances.html'">🔔 <span class="notif-badge hidden" id="notifCount">0</span></button>
+    </div>
+    <div class="content">
+      <div id="alertBox" class="alert hidden"></div>
+
+      <!-- Import CSV -->
+      <div class="import-zone" onclick="document.getElementById('fileInput').click()">
+        <div class="import-icon">📥</div>
+        <p><strong>Cliquez pour importer un CSV Apollo</strong></p>
+        <p>Les colonnes First Name, Last Name, Title, Email, Phone, LinkedIn URL, Website, City sont reconnues automatiquement</p>
+        <input type="file" id="fileInput" accept=".csv">
+      </div>
+      <div id="importProgress" class="hidden" style="margin-bottom:16px;padding:12px;background:#EEF2FF;border-radius:8px;font-size:14px;color:#3730A3;"></div>
+
+      <div class="card">
+        <div class="page-header" style="margin-bottom:16px;">
+          <h2 id="contactCount">Tous les contacts</h2>
+          <div class="actions">
+            <input type="text" id="searchInput" placeholder="Rechercher..." style="width:220px;" oninput="filterContacts()">
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nom</th><th>Poste</th><th>Entreprise</th><th>Email</th><th>Téléphone</th><th>Ville</th><th>Liens</th><th>Déjà attribué</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="contactsTable">
+              <tr><td colspan="9" style="text-align:center;padding:40px;color:#94A3B8;">Chargement...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal détail contact -->
+  <div id="contactModal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:600px;">
+      <div class="modal-header">
+        <span class="modal-title" id="modalTitle">Détail contact</span>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('sharedStyle').textContent = sharedCSS
+    let allContacts = []
+    let currentProfile = null
+
+    function showAlert(msg, type='error') {
+      const box = document.getElementById('alertBox')
+      box.textContent = msg
+      box.className = `alert alert-${type}`
+      box.classList.remove('hidden')
+      setTimeout(() => box.classList.add('hidden'), 4000)
+    }
+
+    function closeModal() { document.getElementById('contactModal').classList.add('hidden') }
+
+    async function loadContacts() {
+      const { data } = await supabase
+        .from('contacts')
+        .select('*, list_contacts(assigned_to_client)')
+        .order('created_at', { ascending: false })
+      allContacts = data || []
+      document.getElementById('contactCount').textContent = `Tous les contacts (${allContacts.length})`
+      renderContacts(allContacts)
+    }
+
+    function renderContacts(contacts) {
+      const tbody = document.getElementById('contactsTable')
+      if (!contacts.length) {
+        tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">👥</div><p>Aucun contact. Importez un CSV Apollo pour commencer.</p></div></td></tr>`
+        return
+      }
+      tbody.innerHTML = contacts.map(c => {
+        const assigned = c.list_contacts?.filter(lc => lc.assigned_to_client)
+        return `<tr>
+          <td><strong>${c.first_name || ''} ${c.last_name || ''}</strong></td>
+          <td>${c.position || '—'}</td>
+          <td>${c.company || '—'}</td>
+          <td>${c.email ? `<a href="mailto:${c.email}" class="contact-link">${c.email}</a>` : '—'}</td>
+          <td>${c.phone_1 || '—'}${c.phone_2 ? '<br><span style="color:#94A3B8;font-size:12px;">'+c.phone_2+'</span>' : ''}</td>
+          <td>${c.city || '—'}</td>
+          <td style="white-space:nowrap;">
+            ${c.linkedin_url ? `<a href="${c.linkedin_url}" target="_blank" class="contact-link">LinkedIn</a> ` : ''}
+            ${c.company_website ? `<a href="${c.company_website}" target="_blank" class="contact-link">Site</a>` : ''}
+          </td>
+          <td>${assigned && assigned.length > 0 ? `<span class="assigned-badge">✓ Oui (${assigned.length}x)</span>` : '<span style="color:#94A3B8;font-size:12px;">Non</span>'}</td>
+          <td>
+            <button class="btn btn-secondary btn-sm" onclick="viewContact('${c.id}')">Voir</button>
+            ${currentProfile?.role === 'admin' ? `<button class="btn btn-danger btn-sm" style="margin-left:6px;" onclick="deleteContact('${c.id}')">✕</button>` : ''}
+          </td>
+        </tr>`
+      }).join('')
+    }
+
+    function filterContacts() {
+      const q = document.getElementById('searchInput').value.toLowerCase()
+      const filtered = allContacts.filter(c =>
+        [c.first_name, c.last_name, c.company, c.email, c.city, c.position].some(v => v && v.toLowerCase().includes(q))
+      )
+      renderContacts(filtered)
+    }
+
+    async function viewContact(id) {
+      const c = allContacts.find(x => x.id === id)
+      if (!c) return
+      const { data: tasks } = await supabase.from('tasks').select('*, profiles(full_name)').eq('contact_id', id).order('done_at', { ascending: false }).limit(10)
+      document.getElementById('modalTitle').textContent = `${c.first_name || ''} ${c.last_name || ''}`
+      document.getElementById('modalContent').innerHTML = `
+        <div class="grid-2" style="margin-bottom:20px;">
+          <div><label style="font-size:12px;color:#64748B;">Poste</label><p style="font-size:14px;margin-top:4px;">${c.position || '—'}</p></div>
+          <div><label style="font-size:12px;color:#64748B;">Entreprise</label><p style="font-size:14px;margin-top:4px;">${c.company || '—'}</p></div>
+          <div><label style="font-size:12px;color:#64748B;">Email</label><p style="font-size:14px;margin-top:4px;">${c.email || '—'}</p></div>
+          <div><label style="font-size:12px;color:#64748B;">Téléphone 1</label><p style="font-size:14px;margin-top:4px;">${c.phone_1 || '—'}</p></div>
+          <div><label style="font-size:12px;color:#64748B;">Téléphone 2</label><p style="font-size:14px;margin-top:4px;">${c.phone_2 || '—'}</p></div>
+          <div><label style="font-size:12px;color:#64748B;">Ville</label><p style="font-size:14px;margin-top:4px;">${c.city || '—'}</p></div>
+        </div>
+        <div style="display:flex;gap:12px;margin-bottom:20px;">
+          ${c.linkedin_url ? `<a href="${c.linkedin_url}" target="_blank" class="btn btn-secondary btn-sm">LinkedIn</a>` : ''}
+          ${c.company_website ? `<a href="${c.company_website}" target="_blank" class="btn btn-secondary btn-sm">Site web</a>` : ''}
+        </div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:12px;">Historique des actions</div>
+        ${tasks && tasks.length > 0 ? tasks.map(t => `
+          <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #E2E8F0;">
+            <div style="font-size:20px;">📝</div>
+            <div>
+              <div style="font-size:14px;">${t.action}</div>
+              ${t.note ? `<div style="font-size:13px;color:#64748B;">${t.note}</div>` : ''}
+              <div style="font-size:12px;color:#94A3B8;margin-top:2px;">${t.profiles?.full_name || 'Système'} · ${new Date(t.done_at).toLocaleDateString('fr-FR', {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+            </div>
+          </div>`).join('') : '<p style="color:#94A3B8;font-size:14px;">Aucune action enregistrée</p>'}
+      `
+      document.getElementById('contactModal').classList.remove('hidden')
+    }
+
+    async function deleteContact(id) {
+      if (!confirm('Supprimer ce contact ?')) return
+      await supabase.from('contacts').delete().eq('id', id)
+      showAlert('Contact supprimé', 'success')
+      loadContacts()
+    }
+
+    // CSV Import
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0]
+      if (!file) return
+      const text = await file.text()
+      const lines = text.split('\n').filter(l => l.trim())
+      const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, '').toLowerCase())
+
+      const mapCol = (h) => {
+        const maps = {
+          'first name': 'first_name', 'firstname': 'first_name',
+          'last name': 'last_name', 'lastname': 'last_name',
+          'title': 'position', 'job title': 'position',
+          'email': 'email', 'work email': 'email',
+          'phone': 'phone_1', 'work phone': 'phone_1', 'work direct phone': 'phone_1',
+          'mobile phone': 'phone_2', 'home phone': 'phone_2',
+          'company': 'company', 'company name': 'company',
+          'city': 'city',
+          'linkedin url': 'linkedin_url', 'linkedin': 'linkedin_url',
+          'website': 'company_website', 'company website': 'company_website',
+        }
+        return maps[h] || null
+      }
+
+      const progress = document.getElementById('importProgress')
+      progress.classList.remove('hidden')
+      progress.textContent = `Importation en cours... (${lines.length - 1} contacts détectés)`
+
+      let imported = 0, skipped = 0
+      const batchSize = 50
+      const rows = []
+
+      for (let i = 1; i < lines.length; i++) {
+        const vals = lines[i].match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g) || lines[i].split(',')
+        const cleaned = vals.map(v => v?.replace(/^"|"$/g, '').trim() || '')
+        const obj = {}
+        headers.forEach((h, idx) => {
+          const key = mapCol(h)
+          if (key && cleaned[idx]) obj[key] = cleaned[idx]
+        })
+        if (obj.first_name || obj.last_name || obj.email) rows.push(obj)
+        else skipped++
+      }
+
+      for (let i = 0; i < rows.length; i += batchSize) {
+        const batch = rows.slice(i, i + batchSize)
+        const { error } = await supabase.from('contacts').upsert(batch, { onConflict: 'email' })
+        if (!error) imported += batch.length
+      }
+
+      // Log task
+      const auth = await getSession()
+      if (auth) {
+        await supabase.from('tasks').insert({ done_by: auth.user.id, action: `Import CSV : ${imported} contacts importés`, note: `Fichier: ${file.name}` })
+      }
+
+      progress.textContent = `✅ ${imported} contacts importés avec succès ! (${skipped} lignes ignorées)`
+      e.target.value = ''
+      loadContacts()
+    })
+
+    async function init() {
+      const auth = await requireAuth(['admin', 'consultant'])
+      if (!auth) return
+      const { session, profile } = auth
+      currentProfile = profile
+      document.getElementById('sidebarContainer').innerHTML = renderSidebar(profile, 'contacts')
+      const notifs = await loadNotifications(session.user.id)
+      if (notifs.length > 0) { document.getElementById('notifCount').textContent = notifs.length; document.getElementById('notifCount').classList.remove('hidden') }
+      loadContacts()
+    }
+    init()
+  </script>
+</body>
+</html>

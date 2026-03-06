@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM — Historique</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <style id="sharedStyle"></style>
+  <style>
+    .filters { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+    .timeline { position: relative; padding-left: 32px; }
+    .timeline::before { content: ''; position: absolute; left: 10px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+    .timeline-item { position: relative; margin-bottom: 20px; }
+    .timeline-dot { position: absolute; left: -28px; top: 8px; width: 12px; height: 12px; border-radius: 50%; background: var(--primary); border: 2px solid white; box-shadow: 0 0 0 2px var(--primary); }
+    .timeline-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .timeline-action { font-size: 14px; font-weight: 500; }
+    .timeline-note { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .timeline-meta { font-size: 12px; color: #94A3B8; margin-top: 6px; display: flex; gap: 12px; }
+    .date-divider { font-size: 13px; font-weight: 600; color: var(--muted); margin: 20px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <div id="sidebarContainer"></div>
+  <div class="main">
+    <div class="topbar">
+      <span class="topbar-title">Historique des actions</span>
+      <button class="notif-btn" onclick="window.location.href='relances.html'">🔔 <span class="notif-badge hidden" id="notifCount">0</span></button>
+    </div>
+    <div class="content">
+      <div class="card">
+        <div class="filters">
+          <input type="text" id="searchTasks" placeholder="Rechercher dans l'historique..." style="max-width:300px;" oninput="filterTasks()">
+          <select id="userFilter" onchange="filterTasks()"><option value="">Tous les utilisateurs</option></select>
+          <input type="date" id="dateFrom" onchange="filterTasks()">
+          <input type="date" id="dateTo" onchange="filterTasks()">
+          <button class="btn btn-secondary btn-sm" onclick="resetFilters()">Réinitialiser</button>
+        </div>
+        <div id="taskCount" style="font-size:13px;color:var(--muted);margin-bottom:16px;"></div>
+        <div id="tasksFeed"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('sharedStyle').textContent = sharedCSS
+    let allTasks = []
+
+    async function loadTasks() {
+      const { data } = await supabase
+        .from('tasks')
+        .select('*, profiles(full_name, role), contacts(first_name, last_name, company)')
+        .order('done_at', { ascending: false })
+        .limit(200)
+
+      allTasks = data || []
+
+      // Populate user filter
+      const users = [...new Map(allTasks.filter(t => t.profiles).map(t => [t.profiles.full_name, t.profiles])).values()]
+      const sel = document.getElementById('userFilter')
+      sel.innerHTML = '<option value="">Tous les utilisateurs</option>' +
+        users.map(u => `<option value="${u.full_name}">${u.full_name}</option>`).join('')
+
+      renderTasks(allTasks)
+    }
+
+    function filterTasks() {
+      const q = document.getElementById('searchTasks').value.toLowerCase()
+      const user = document.getElementById('userFilter').value
+      const from = document.getElementById('dateFrom').value
+      const to = document.getElementById('dateTo').value
+
+      let filtered = allTasks
+      if (q) filtered = filtered.filter(t => t.action?.toLowerCase().includes(q) || t.note?.toLowerCase().includes(q) || t.contacts?.company?.toLowerCase().includes(q))
+      if (user) filtered = filtered.filter(t => t.profiles?.full_name === user)
+      if (from) filtered = filtered.filter(t => new Date(t.done_at) >= new Date(from))
+      if (to) filtered = filtered.filter(t => new Date(t.done_at) <= new Date(to + 'T23:59:59'))
+
+      renderTasks(filtered)
+    }
+
+    function resetFilters() {
+      document.getElementById('searchTasks').value = ''
+      document.getElementById('userFilter').value = ''
+      document.getElementById('dateFrom').value = ''
+      document.getElementById('dateTo').value = ''
+      renderTasks(allTasks)
+    }
+
+    function renderTasks(tasks) {
+      document.getElementById('taskCount').textContent = `${tasks.length} action(s) trouvée(s)`
+      const feed = document.getElementById('tasksFeed')
+
+      if (!tasks.length) {
+        feed.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>Aucune action enregistrée</p></div>'
+        return
+      }
+
+      // Group by date
+      const groups = {}
+      tasks.forEach(t => {
+        const date = new Date(t.done_at).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+        if (!groups[date]) groups[date] = []
+        groups[date].push(t)
+      })
+
+      feed.innerHTML = Object.entries(groups).map(([date, items]) => `
+        <div class="date-divider">${date.charAt(0).toUpperCase() + date.slice(1)}</div>
+        <div class="timeline">
+          ${items.map(t => `
+            <div class="timeline-item">
+              <div class="timeline-dot"></div>
+              <div class="timeline-card">
+                <div class="timeline-action">${t.action}</div>
+                ${t.note ? `<div class="timeline-note">${t.note}</div>` : ''}
+                ${t.contacts ? `<div class="timeline-note">👤 ${t.contacts.first_name || ''} ${t.contacts.last_name || ''} — ${t.contacts.company || ''}</div>` : ''}
+                <div class="timeline-meta">
+                  <span>🧑 ${t.profiles?.full_name || 'Système'}</span>
+                  <span>🕐 ${new Date(t.done_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              </div>
+            </div>`).join('')}
+        </div>`).join('')
+    }
+
+    async function init() {
+      const auth = await requireAuth()
+      if (!auth) return
+      const { session, profile } = auth
+      document.getElementById('sidebarContainer').innerHTML = renderSidebar(profile, 'tasks')
+      const notifs = await loadNotifications(session.user.id)
+      if (notifs.length > 0) { document.getElementById('notifCount').textContent = notifs.length; document.getElementById('notifCount').classList.remove('hidden') }
+      loadTasks()
+    }
+    init()
+  </script>
+</body>
+</html>

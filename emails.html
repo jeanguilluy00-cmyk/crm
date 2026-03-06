@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM — Emails</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <style id="sharedStyle"></style>
+  <style>
+    .tabs { display: flex; gap: 4px; margin-bottom: 24px; background: var(--bg); border-radius: 10px; padding: 4px; width: fit-content; }
+    .tab { padding: 8px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; color: var(--muted); border: none; background: none; transition: all 0.15s; }
+    .tab.active { background: white; color: var(--primary); box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .request-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .request-card:hover { border-color: #CBD5E1; }
+    .request-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+    .request-name { font-size: 15px; font-weight: 600; }
+    .request-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .request-note { background: #F8FAFC; border-radius: 8px; padding: 10px 14px; font-size: 14px; color: var(--text); margin: 12px 0; border-left: 3px solid var(--primary); }
+    .request-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .sent-info { font-size: 13px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div id="sidebarContainer"></div>
+  <div class="main">
+    <div class="topbar">
+      <span class="topbar-title">Gestion des emails</span>
+      <button class="notif-btn" onclick="window.location.href='relances.html'">🔔 <span class="notif-badge hidden" id="notifCount">0</span></button>
+    </div>
+    <div class="content">
+      <div id="alertBox" class="alert hidden"></div>
+
+      <!-- Tabs selon le rôle -->
+      <div class="tabs" id="tabsContainer"></div>
+
+      <!-- Vue consultant : créer une demande -->
+      <div id="viewCreate" class="hidden">
+        <div class="card" style="max-width:600px;margin-bottom:24px;">
+          <div class="card-title">Nouvelle demande d'envoi d'email</div>
+          <div class="form-group">
+            <label>Contact</label>
+            <select id="contactSelect"><option value="">Chargement...</option></select>
+          </div>
+          <div class="form-group">
+            <label>Message pour le marketing (contexte, objet suggéré, etc.)</label>
+            <textarea id="requestNote" rows="4" placeholder="Ex: Contacter pour suite au call du 05/03, proposer un RDV, objet: Suite à notre échange..."></textarea>
+          </div>
+          <button class="btn btn-primary" onclick="createRequest()">📤 Envoyer la demande</button>
+        </div>
+        <h3 style="font-size:16px;font-weight:600;margin-bottom:16px;">Mes demandes envoyées</h3>
+        <div id="myRequestsList"></div>
+      </div>
+
+      <!-- Vue marketing : traiter les demandes -->
+      <div id="viewMarketing" class="hidden">
+        <h3 style="font-size:16px;font-weight:600;margin-bottom:16px;" id="marketingTitle">Demandes en attente</h3>
+        <div id="marketingRequestsList"></div>
+      </div>
+
+      <!-- Vue admin : tout voir -->
+      <div id="viewAll" class="hidden">
+        <div class="search-bar">
+          <select id="statusFilter" onchange="loadAllRequests()">
+            <option value="">Tous les statuts</option>
+            <option value="pending">En attente</option>
+            <option value="sent">Envoyé</option>
+            <option value="replied">Répondu</option>
+          </select>
+        </div>
+        <div id="allRequestsList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal confirmer envoi -->
+  <div id="sentModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Confirmer l'envoi du mail</span>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="form-group">
+        <label>Date et heure d'envoi</label>
+        <input type="datetime-local" id="sentAt">
+      </div>
+      <div class="form-group">
+        <label>Note optionnelle (objet du mail, etc.)</label>
+        <textarea id="sentNote" rows="3" placeholder="Ex: Mail envoyé avec objet 'Suite à notre échange'..."></textarea>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
+        <button class="btn btn-success" onclick="confirmSent()">✅ Confirmer l'envoi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal marquer répondu -->
+  <div id="repliedModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Marquer comme répondu</span>
+        <button class="modal-close" onclick="document.getElementById('repliedModal').classList.add('hidden')">✕</button>
+      </div>
+      <div class="form-group">
+        <label>Note sur la réponse</label>
+        <textarea id="replyNote" rows="3" placeholder="Ex: Client intéressé, veut un RDV la semaine prochaine..."></textarea>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button class="btn btn-secondary" onclick="document.getElementById('repliedModal').classList.add('hidden')">Annuler</button>
+        <button class="btn btn-primary" onclick="confirmReplied()">Confirmer</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('sharedStyle').textContent = sharedCSS
+    let currentProfile = null
+    let currentSession = null
+    let currentRequestId = null
+
+    function closeModal() { document.getElementById('sentModal').classList.add('hidden') }
+    function showAlert(msg, type='error') {
+      const box = document.getElementById('alertBox')
+      box.textContent = msg; box.className = `alert alert-${type}`; box.classList.remove('hidden')
+      setTimeout(() => box.classList.add('hidden'), 4000)
+    }
+
+    function formatDate(d) {
+      if (!d) return '—'
+      return new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    }
+
+    function statusBadge(s) {
+      const map = { pending: ['badge-pending', '⏳ En attente'], sent: ['badge-sent', '📨 Envoyé'], replied: ['badge-replied', '💬 Répondu'] }
+      const [cls, label] = map[s] || ['', s]
+      return `<span class="badge ${cls}">${label}</span>`
+    }
+
+    function requestCard(r, showActions = false) {
+      const c = r.contacts
+      const requester = r.profiles
+      return `
+        <div class="request-card">
+          <div class="request-header">
+            <div>
+              <div class="request-name">${c?.first_name || ''} ${c?.last_name || ''}</div>
+              <div class="request-sub">${c?.company || ''} · ${c?.email || ''}</div>
+              ${requester ? `<div class="request-sub">Demandé par: ${requester.full_name} · ${formatDate(r.created_at)}</div>` : ''}
+            </div>
+            ${statusBadge(r.status)}
+          </div>
+          ${r.request_note ? `<div class="request-note">💬 ${r.request_note}</div>` : ''}
+          ${r.status !== 'pending' ? `<div class="sent-info">📨 Envoyé le : <strong>${formatDate(r.sent_at)}</strong>${r.reply_note ? ` · Note: ${r.reply_note}` : ''}</div>` : ''}
+          ${r.replied ? `<div class="sent-info" style="color:var(--success);">✅ Réponse reçue</div>` : ''}
+          <div class="request-actions" style="margin-top:12px;">
+            ${showActions && r.status === 'pending' ? `<button class="btn btn-success btn-sm" onclick="openSentModal('${r.id}')">✅ Marquer comme envoyé</button>` : ''}
+            ${showActions && r.status === 'sent' && !r.replied ? `<button class="btn btn-primary btn-sm" onclick="openRepliedModal('${r.id}')">💬 Réponse reçue</button>` : ''}
+          </div>
+        </div>`
+    }
+
+    async function loadContacts() {
+      const { data } = await supabase.from('contacts').select('id, first_name, last_name, company').order('last_name')
+      const sel = document.getElementById('contactSelect')
+      sel.innerHTML = '<option value="">— Choisir un contact —</option>' +
+        (data || []).map(c => `<option value="${c.id}">${c.first_name || ''} ${c.last_name || ''} — ${c.company || ''}</option>`).join('')
+    }
+
+    async function createRequest() {
+      const contact_id = document.getElementById('contactSelect').value
+      const request_note = document.getElementById('requestNote').value.trim()
+      if (!contact_id) return showAlert('Sélectionnez un contact')
+      const { error } = await supabase.from('email_requests').insert({ contact_id, requested_by: currentSession.user.id, request_note })
+      if (error) return showAlert('Erreur lors de la création')
+
+      // Notify marketing users
+      const { data: mktUsers } = await supabase.from('profiles').select('id').eq('role', 'marketing')
+      if (mktUsers?.length) {
+        await supabase.from('notifications').insert(mktUsers.map(u => ({
+          user_id: u.id, message: `Nouvelle demande d'email de ${currentProfile.full_name}`,
+          scheduled_for: new Date().toISOString()
+        })))
+      }
+
+      await supabase.from('tasks').insert({ done_by: currentSession.user.id, contact_id, action: 'Demande d\'envoi d\'email créée', note: request_note })
+      showAlert('Demande envoyée au marketing !', 'success')
+      document.getElementById('contactSelect').value = ''
+      document.getElementById('requestNote').value = ''
+      loadMyRequests()
+    }
+
+    async function loadMyRequests() {
+      const { data } = await supabase
+        .from('email_requests')
+        .select('*, contacts(*), profiles(*)')
+        .eq('requested_by', currentSession.user.id)
+        .order('created_at', { ascending: false })
+      const el = document.getElementById('myRequestsList')
+      if (!data?.length) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>Aucune demande envoyée</p></div>'; return }
+      el.innerHTML = data.map(r => requestCard(r, false)).join('')
+    }
+
+    async function loadMarketingRequests() {
+      const { data } = await supabase
+        .from('email_requests')
+        .select('*, contacts(*), profiles(*)')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+      const el = document.getElementById('marketingRequestsList')
+      document.getElementById('marketingTitle').textContent = `Demandes en attente (${data?.length || 0})`
+      if (!data?.length) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">✅</div><p>Aucune demande en attente</p></div>'; return }
+      el.innerHTML = data.map(r => requestCard(r, true)).join('')
+    }
+
+    async function loadAllRequests() {
+      const status = document.getElementById('statusFilter')?.value
+      let query = supabase.from('email_requests').select('*, contacts(*), profiles(*)')
+      if (status) query = query.eq('status', status)
+      const { data } = await query.order('created_at', { ascending: false })
+      const el = document.getElementById('allRequestsList')
+      if (!data?.length) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>Aucun résultat</p></div>'; return }
+      el.innerHTML = data.map(r => requestCard(r, true)).join('')
+    }
+
+    function openSentModal(id) {
+      currentRequestId = id
+      const now = new Date()
+      now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
+      document.getElementById('sentAt').value = now.toISOString().slice(0, 16)
+      document.getElementById('sentModal').classList.remove('hidden')
+    }
+
+    async function confirmSent() {
+      const sent_at = document.getElementById('sentAt').value
+      const reply_note = document.getElementById('sentNote').value.trim()
+      if (!sent_at) return showAlert('Sélectionnez la date d\'envoi')
+
+      await supabase.from('email_requests').update({ status: 'sent', sent_at: new Date(sent_at).toISOString(), reply_note }).eq('id', currentRequestId)
+
+      // Récupérer la demande pour notifier le consultant
+      const { data: req } = await supabase.from('email_requests').select('*, contacts(*)').eq('id', currentRequestId).single()
+
+      // Notif consultant dans 1 semaine
+      if (req) {
+        const relanceDate = new Date(sent_at)
+        relanceDate.setDate(relanceDate.getDate() + 7)
+        await supabase.from('notifications').insert({
+          user_id: req.requested_by,
+          message: `🔔 Relancer ${req.contacts?.first_name || ''} ${req.contacts?.last_name || ''} — mail envoyé il y a 1 semaine`,
+          link_to: currentRequestId,
+          scheduled_for: relanceDate.toISOString()
+        })
+        await supabase.from('tasks').insert({
+          done_by: currentSession.user.id,
+          contact_id: req.contact_id,
+          action: `Email envoyé le ${new Date(sent_at).toLocaleDateString('fr-FR')}`,
+          note: reply_note || null
+        })
+      }
+
+      closeModal()
+      showAlert('Email marqué comme envoyé ! Relance programmée dans 7 jours.', 'success')
+      if (currentProfile.role === 'marketing') loadMarketingRequests()
+      else loadAllRequests()
+    }
+
+    function openRepliedModal(id) {
+      currentRequestId = id
+      document.getElementById('repliedModal').classList.remove('hidden')
+    }
+
+    async function confirmReplied() {
+      const note = document.getElementById('replyNote').value.trim()
+      const { data: req } = await supabase.from('email_requests').select('contact_id').eq('id', currentRequestId).single()
+      await supabase.from('email_requests').update({ replied: true, status: 'replied', reply_note: note }).eq('id', currentRequestId)
+      if (req) await supabase.from('tasks').insert({ done_by: currentSession.user.id, contact_id: req.contact_id, action: 'Réponse reçue au mail', note })
+      document.getElementById('repliedModal').classList.add('hidden')
+      showAlert('Réponse enregistrée !', 'success')
+      if (currentProfile.role === 'marketing') loadMarketingRequests()
+      else if (currentProfile.role === 'admin') loadAllRequests()
+      else loadMyRequests()
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab))
+      document.getElementById('viewCreate').classList.toggle('hidden', tab !== 'create')
+      document.getElementById('viewMarketing').classList.toggle('hidden', tab !== 'marketing')
+      document.getElementById('viewAll').classList.toggle('hidden', tab !== 'all')
+      if (tab === 'create') loadMyRequests()
+      if (tab === 'marketing') loadMarketingRequests()
+      if (tab === 'all') loadAllRequests()
+    }
+
+    async function init() {
+      const auth = await requireAuth()
+      if (!auth) return
+      const { session, profile } = auth
+      currentSession = session; currentProfile = profile
+      document.getElementById('sidebarContainer').innerHTML = renderSidebar(profile, 'emails')
+
+      const notifs = await loadNotifications(session.user.id)
+      if (notifs.length > 0) { document.getElementById('notifCount').textContent = notifs.length; document.getElementById('notifCount').classList.remove('hidden') }
+
+      const tabs = document.getElementById('tabsContainer')
+      if (profile.role === 'admin') {
+        tabs.innerHTML = `
+          <button class="tab active" data-tab="create" onclick="switchTab('create')">📤 Mes demandes</button>
+          <button class="tab" data-tab="marketing" onclick="switchTab('marketing')">📥 À traiter</button>
+          <button class="tab" data-tab="all" onclick="switchTab('all')">📊 Tout voir</button>`
+        document.getElementById('viewCreate').classList.remove('hidden')
+        loadContacts(); loadMyRequests()
+      } else if (profile.role === 'consultant') {
+        tabs.innerHTML = `<button class="tab active" data-tab="create" onclick="switchTab('create')">📤 Mes demandes</button>`
+        document.getElementById('viewCreate').classList.remove('hidden')
+        loadContacts(); loadMyRequests()
+      } else if (profile.role === 'marketing') {
+        tabs.innerHTML = `<button class="tab active" data-tab="marketing" onclick="switchTab('marketing')">📥 Demandes à traiter</button>`
+        document.getElementById('viewMarketing').classList.remove('hidden')
+        loadMarketingRequests()
+      }
+    }
+    init()
+  </script>
+</body>
+</html>

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM — À relancer</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <style id="sharedStyle"></style>
+  <style>
+    .relance-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; }
+    .relance-card.urgent { border-left: 4px solid var(--danger); }
+    .relance-card.normal { border-left: 4px solid var(--warning); }
+    .relance-contact { font-size: 15px; font-weight: 600; }
+    .relance-company { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .relance-context { background: #F8FAFC; border-radius: 8px; padding: 10px 14px; font-size: 14px; margin: 12px 0; border-left: 3px solid var(--warning); }
+    .relance-date { font-size: 13px; color: var(--muted); }
+    .days-badge { padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 700; }
+    .days-urgent { background: #FEE2E2; color: var(--danger); }
+    .days-warning { background: #FEF3C7; color: #92400E; }
+    .filter-tabs { display: flex; gap: 4px; margin-bottom: 24px; background: var(--bg); border-radius: 10px; padding: 4px; width: fit-content; }
+    .filter-tab { padding: 8px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; color: var(--muted); border: none; background: none; }
+    .filter-tab.active { background: white; color: var(--primary); box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  </style>
+</head>
+<body>
+  <div id="sidebarContainer"></div>
+  <div class="main">
+    <div class="topbar">
+      <span class="topbar-title">À relancer</span>
+      <button class="notif-btn">🔔 <span class="notif-badge hidden" id="notifCount">0</span></button>
+    </div>
+    <div class="content">
+      <div id="alertBox" class="alert hidden"></div>
+
+      <div class="filter-tabs">
+        <button class="filter-tab active" onclick="setFilter('all', this)">Tous</button>
+        <button class="filter-tab" onclick="setFilter('urgent', this)">🔴 Urgents (7j+)</button>
+        <button class="filter-tab" onclick="setFilter('normal', this)">🟡 À venir (5-7j)</button>
+      </div>
+
+      <div id="relancesList"></div>
+
+      <!-- Notifications non lues -->
+      <div style="margin-top:32px;">
+        <h3 style="font-size:16px;font-weight:600;margin-bottom:16px;">🔔 Notifications</h3>
+        <div id="notifList"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('sharedStyle').textContent = sharedCSS
+    let currentSession = null
+    let allRelances = []
+    let currentFilter = 'all'
+
+    function showAlert(msg, type='error') {
+      const box = document.getElementById('alertBox')
+      box.textContent = msg; box.className = `alert alert-${type}`; box.classList.remove('hidden')
+      setTimeout(() => box.classList.add('hidden'), 4000)
+    }
+
+    function setFilter(f, el) {
+      currentFilter = f
+      document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'))
+      el.classList.add('active')
+      renderRelances()
+    }
+
+    function renderRelances() {
+      const el = document.getElementById('relancesList')
+      let items = allRelances
+      if (currentFilter === 'urgent') items = allRelances.filter(r => r.days >= 7)
+      if (currentFilter === 'normal') items = allRelances.filter(r => r.days >= 5 && r.days < 7)
+
+      if (!items.length) {
+        el.innerHTML = '<div class="empty-state"><div class="empty-icon">✅</div><p>Aucune relance dans cette catégorie</p></div>'
+        return
+      }
+
+      el.innerHTML = items.map(r => {
+        const c = r.contacts
+        const isUrgent = r.days >= 7
+        return `
+          <div class="relance-card ${isUrgent ? 'urgent' : 'normal'}">
+            <div style="flex:1;">
+              <div class="relance-contact">${c?.first_name || ''} ${c?.last_name || ''}</div>
+              <div class="relance-company">${c?.company || ''} · ${c?.email || ''}</div>
+              ${c?.phone_1 ? `<div class="relance-date" style="margin-top:4px;">📞 ${c.phone_1}</div>` : ''}
+              ${r.request_note ? `<div class="relance-context">📋 Contexte : ${r.request_note}</div>` : ''}
+              ${r.reply_note ? `<div class="relance-context" style="border-color:var(--success);">📨 Note mail : ${r.reply_note}</div>` : ''}
+              <div class="relance-date">Mail envoyé le ${new Date(r.sent_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+              <div style="display:flex;gap:8px;margin-top:12px;">
+                <button class="btn btn-primary btn-sm" onclick="markRelanceDone('${r.id}', '${c?.id}')">✅ Relance effectuée</button>
+                <a href="mailto:${c?.email || ''}" class="btn btn-secondary btn-sm">📧 Envoyer email</a>
+                ${c?.phone_1 ? `<a href="tel:${c.phone_1}" class="btn btn-secondary btn-sm">📞 Appeler</a>` : ''}
+              </div>
+            </div>
+            <div style="text-align:right;margin-left:20px;">
+              <span class="days-badge ${isUrgent ? 'days-urgent' : 'days-warning'}">J+${r.days}</span>
+              ${r.replied ? '<div style="color:var(--success);font-size:12px;margin-top:6px;">💬 Répondu</div>' : ''}
+            </div>
+          </div>`
+      }).join('')
+    }
+
+    async function loadRelances() {
+      const { data } = await supabase
+        .from('email_requests')
+        .select('*, contacts(*)')
+        .eq('status', 'sent')
+        .eq('requested_by', currentSession.user.id)
+        .order('sent_at', { ascending: true })
+
+      allRelances = (data || []).map(r => ({
+        ...r,
+        days: Math.floor((Date.now() - new Date(r.sent_at)) / (1000 * 60 * 60 * 24))
+      })).filter(r => r.days >= 5)
+
+      renderRelances()
+    }
+
+    async function markRelanceDone(requestId, contactId) {
+      await supabase.from('tasks').insert({
+        done_by: currentSession.user.id,
+        contact_id: contactId || null,
+        action: 'Relance téléphonique effectuée',
+        note: 'Suite à notification de relance J+7'
+      })
+      // Marquer les notifs liées comme lues
+      await supabase.from('notifications').update({ is_read: true }).eq('link_to', requestId).eq('user_id', currentSession.user.id)
+      showAlert('Relance marquée comme effectuée !', 'success')
+      loadRelances()
+      loadNotifications_local()
+    }
+
+    async function loadNotifications_local() {
+      const now = new Date().toISOString()
+      const { data } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', currentSession.user.id)
+        .eq('is_read', false)
+        .lte('scheduled_for', now)
+        .order('created_at', { ascending: false })
+
+      const el = document.getElementById('notifList')
+      const badge = document.getElementById('notifCount')
+
+      if (!data?.length) {
+        el.innerHTML = '<div style="color:#94A3B8;font-size:14px;">Aucune notification</div>'
+        badge.classList.add('hidden')
+        return
+      }
+
+      badge.textContent = data.length
+      badge.classList.remove('hidden')
+
+      el.innerHTML = data.map(n => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:white;border:1px solid #E2E8F0;border-radius:10px;margin-bottom:10px;border-left:4px solid var(--primary);">
+          <div>
+            <div style="font-size:14px;font-weight:500;">${n.message}</div>
+            <div style="font-size:12px;color:#94A3B8;margin-top:2px;">${new Date(n.scheduled_for).toLocaleDateString('fr-FR', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="markNotifRead('${n.id}')">Lu ✓</button>
+        </div>`).join('')
+    }
+
+    async function markNotifRead(id) {
+      await supabase.from('notifications').update({ is_read: true }).eq('id', id)
+      loadNotifications_local()
+    }
+
+    async function init() {
+      const auth = await requireAuth(['admin', 'consultant'])
+      if (!auth) return
+      const { session, profile } = auth
+      currentSession = session
+      document.getElementById('sidebarContainer').innerHTML = renderSidebar(profile, 'relances')
+      await loadRelances()
+      await loadNotifications_local()
+    }
+    init()
+  </script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM — Connexion</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', sans-serif; background: #F1F5F9; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .login-wrapper { display: flex; width: 100%; max-width: 900px; min-height: 520px; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.12); }
+    .login-left { background: #0F172A; flex: 1; padding: 52px 48px; display: flex; flex-direction: column; justify-content: center; }
+    .login-left .logo { display: flex; align-items: center; gap: 12px; margin-bottom: 48px; }
+    .login-left .logo-icon { font-size: 32px; }
+    .login-left .logo-text { color: white; font-size: 26px; font-weight: 700; }
+    .login-left h1 { color: white; font-size: 28px; font-weight: 700; line-height: 1.3; margin-bottom: 16px; }
+    .login-left p { color: #94A3B8; font-size: 15px; line-height: 1.6; }
+    .feature { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+    .feature-icon { font-size: 18px; }
+    .feature-text { color: #CBD5E1; font-size: 14px; }
+    .login-right { background: white; width: 380px; padding: 52px 40px; display: flex; flex-direction: column; justify-content: center; }
+    .login-right h2 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+    .login-right .subtitle { color: #64748B; font-size: 14px; margin-bottom: 32px; }
+    .form-group { margin-bottom: 18px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 7px; color: #374151; }
+    .form-group input { width: 100%; padding: 11px 14px; border: 1.5px solid #E2E8F0; border-radius: 9px; font-size: 14px; font-family: 'Inter', sans-serif; outline: none; transition: border-color 0.15s; }
+    .form-group input:focus { border-color: #4F46E5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+    .btn-login { width: 100%; padding: 12px; background: #4F46E5; color: white; border: none; border-radius: 9px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background 0.15s; margin-top: 4px; }
+    .btn-login:hover { background: #3730A3; }
+    .btn-login:disabled { background: #A5B4FC; cursor: not-allowed; }
+    .alert { padding: 11px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+    .alert-error { background: #FEE2E2; color: #991B1B; }
+    .alert-success { background: #D1FAE5; color: #065F46; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="login-wrapper">
+    <div class="login-left">
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">CRM Interne</span>
+      </div>
+      <h1>Gérez vos contacts et vos campagnes</h1>
+      <p>Votre outil interne pour remplacer Apollo et centraliser toute la prospection.</p>
+      <div class="feature"><span class="feature-icon">📥</span><span class="feature-text">Import de contacts depuis Apollo</span></div>
+      <div class="feature"><span class="feature-icon">✉️</span><span class="feature-text">Workflow email consultant → marketing</span></div>
+      <div class="feature"><span class="feature-icon">🔔</span><span class="feature-text">Notifications de relance automatiques</span></div>
+      <div class="feature"><span class="feature-icon">📊</span><span class="feature-text">Suivi complet des tâches et historique</span></div>
+    </div>
+    <div class="login-right">
+      <h2>Connexion</h2>
+      <p class="subtitle">Entrez vos identifiants pour accéder au CRM</p>
+      <div id="alertBox" class="alert hidden"></div>
+      <form id="loginForm">
+        <div class="form-group">
+          <label>Adresse email</label>
+          <input type="email" id="email" placeholder="vous@exemple.com" required>
+        </div>
+        <div class="form-group">
+          <label>Mot de passe</label>
+          <input type="password" id="password" placeholder="••••••••" required>
+        </div>
+        <button type="submit" class="btn-login" id="loginBtn">Se connecter</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = 'https://aguqmgbwuhvxabvxzecx.supabase.co'
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFndXFtZ2J3dWh2eGFidnh6ZWN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MTMwNTIsImV4cCI6MjA4ODM4OTA1Mn0.TlVJDAMnrCIyXzQVJzUVMoLb_MrJTqOsliV_Fi_NKkI'
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+    // Redirect if already logged in
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) window.location.href = 'dashboard.html'
+    })
+
+    function showAlert(msg, type = 'error') {
+      const box = document.getElementById('alertBox')
+      box.textContent = msg
+      box.className = `alert alert-${type}`
+      box.classList.remove('hidden')
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const btn = document.getElementById('loginBtn')
+      btn.disabled = true
+      btn.textContent = 'Connexion...'
+      const email = document.getElementById('email').value
+      const password = document.getElementById('password').value
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) {
+        showAlert('Email ou mot de passe incorrect.')
+        btn.disabled = false
+        btn.textContent = 'Se connecter'
+        return
+      }
+      window.location.href = 'dashboard.html'
+    })
+  </script>
+</body>
+</html>

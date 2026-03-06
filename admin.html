@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM — Administration</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <style id="sharedStyle"></style>
+  <style>
+    .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+    .user-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; border-bottom: 1px solid var(--border); }
+    .user-row:last-child { border-bottom: none; }
+    .user-avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0; }
+    .user-info-block { margin-left: 12px; flex: 1; }
+    .user-info-name { font-size: 14px; font-weight: 600; }
+    .user-info-email { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div id="sidebarContainer"></div>
+  <div class="main">
+    <div class="topbar">
+      <span class="topbar-title">Administration</span>
+      <button class="notif-btn" onclick="window.location.href='relances.html'">🔔 <span class="notif-badge hidden" id="notifCount">0</span></button>
+    </div>
+    <div class="content">
+      <div id="alertBox" class="alert hidden"></div>
+      <div class="admin-grid">
+
+        <!-- Gestion des utilisateurs -->
+        <div class="card">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+            Utilisateurs
+            <button class="btn btn-primary btn-sm" onclick="openInviteModal()">+ Inviter</button>
+          </div>
+          <div id="usersList"><div style="color:#94A3B8;font-size:14px;">Chargement...</div></div>
+        </div>
+
+        <!-- Statistiques globales -->
+        <div class="card">
+          <div class="card-title">Statistiques globales</div>
+          <div id="globalStats"></div>
+        </div>
+
+        <!-- Gestion des données -->
+        <div class="card">
+          <div class="card-title">⚠️ Zone de gestion des données</div>
+          <p style="font-size:14px;color:var(--muted);margin-bottom:16px;">Actions irréversibles — à utiliser avec précaution.</p>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <button class="btn btn-danger" onclick="confirmDeleteAll('contacts')">🗑️ Supprimer tous les contacts</button>
+            <button class="btn btn-danger" onclick="confirmDeleteAll('lists')">🗑️ Supprimer toutes les listes</button>
+            <button class="btn btn-secondary" onclick="exportData()">📥 Exporter tous les contacts (CSV)</button>
+          </div>
+        </div>
+
+        <!-- Infos système -->
+        <div class="card">
+          <div class="card-title">ℹ️ Infos système</div>
+          <div id="sysInfo" style="font-size:14px;color:var(--muted);line-height:2;"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal inviter utilisateur -->
+  <div id="inviteModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Inviter un utilisateur</span>
+        <button class="modal-close" onclick="closeInviteModal()">✕</button>
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">L'utilisateur recevra un email pour créer son compte. Vous devrez ensuite lui attribuer son rôle.</p>
+      <div class="form-group">
+        <label>Prénom et nom</label>
+        <input type="text" id="inviteName" placeholder="Ex: Marie Dupont">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="inviteEmail" placeholder="marie@exemple.com">
+      </div>
+      <div class="form-group">
+        <label>Rôle</label>
+        <select id="inviteRole">
+          <option value="consultant">Consultant</option>
+          <option value="marketing">Marketing</option>
+          <option value="admin">Administrateur</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button class="btn btn-secondary" onclick="closeInviteModal()">Annuler</button>
+        <button class="btn btn-primary" onclick="inviteUser()">Envoyer l'invitation</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal changer rôle -->
+  <div id="roleModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Modifier le rôle</span>
+        <button class="modal-close" onclick="document.getElementById('roleModal').classList.add('hidden')">✕</button>
+      </div>
+      <div class="form-group">
+        <label>Nouveau rôle</label>
+        <select id="newRole">
+          <option value="consultant">Consultant</option>
+          <option value="marketing">Marketing</option>
+          <option value="admin">Administrateur</option>
+        </select>
+      </div>
+      <input type="hidden" id="editUserId">
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button class="btn btn-secondary" onclick="document.getElementById('roleModal').classList.add('hidden')">Annuler</button>
+        <button class="btn btn-primary" onclick="updateRole()">Mettre à jour</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('sharedStyle').textContent = sharedCSS
+
+    function closeInviteModal() { document.getElementById('inviteModal').classList.add('hidden') }
+    function openInviteModal() { document.getElementById('inviteModal').classList.remove('hidden') }
+    function showAlert(msg, type='error') {
+      const box = document.getElementById('alertBox')
+      box.textContent = msg; box.className = `alert alert-${type}`; box.classList.remove('hidden')
+      setTimeout(() => box.classList.add('hidden'), 5000)
+    }
+
+    async function loadUsers() {
+      const { data } = await supabase.from('profiles').select('*').order('created_at')
+      const el = document.getElementById('usersList')
+      if (!data?.length) { el.innerHTML = '<p style="color:#94A3B8;font-size:14px;">Aucun utilisateur</p>'; return }
+      const roleLabels = { admin: 'Administrateur', consultant: 'Consultant', marketing: 'Marketing' }
+      const roleBadge = { admin: 'badge-admin', consultant: 'badge-consultant', marketing: 'badge-marketing' }
+      el.innerHTML = data.map(u => `
+        <div class="user-row">
+          <div style="display:flex;align-items:center;">
+            <div class="user-avatar">${(u.full_name || 'U')[0].toUpperCase()}</div>
+            <div class="user-info-block">
+              <div class="user-info-name">${u.full_name || 'Sans nom'}</div>
+              <div class="user-info-email">${new Date(u.created_at).toLocaleDateString('fr-FR')}</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="badge ${roleBadge[u.role] || ''}">${roleLabels[u.role] || u.role}</span>
+            <button class="btn btn-secondary btn-sm" onclick="openRoleModal('${u.id}', '${u.role}')">Modifier</button>
+          </div>
+        </div>`).join('')
+    }
+
+    function openRoleModal(id, currentRole) {
+      document.getElementById('editUserId').value = id
+      document.getElementById('newRole').value = currentRole
+      document.getElementById('roleModal').classList.remove('hidden')
+    }
+
+    async function updateRole() {
+      const id = document.getElementById('editUserId').value
+      const role = document.getElementById('newRole').value
+      await supabase.from('profiles').update({ role }).eq('id', id)
+      document.getElementById('roleModal').classList.add('hidden')
+      showAlert('Rôle mis à jour !', 'success')
+      loadUsers()
+    }
+
+    async function inviteUser() {
+      const full_name = document.getElementById('inviteName').value.trim()
+      const email = document.getElementById('inviteEmail').value.trim()
+      const role = document.getElementById('inviteRole').value
+
+      if (!full_name || !email) return showAlert('Remplissez tous les champs')
+
+      // Sign up the user with a temp password — they can reset via Supabase
+      const tempPassword = Math.random().toString(36).slice(-10) + 'A1!'
+      const { data, error } = await supabase.auth.signUp({ email, password: tempPassword, options: { data: { full_name } } })
+      if (error) return showAlert('Erreur : ' + error.message)
+
+      if (data.user) {
+        await supabase.from('profiles').upsert({ id: data.user.id, full_name, role })
+        showAlert(`✅ Compte créé pour ${full_name}. Mot de passe temporaire : ${tempPassword} — Transmettez-le à l'utilisateur, il pourra le changer depuis Supabase.`, 'success')
+        closeInviteModal()
+        loadUsers()
+      }
+    }
+
+    async function loadStats() {
+      const [{ count: c1 }, { count: c2 }, { count: c3 }, { count: c4 }, { count: c5 }] = await Promise.all([
+        supabase.from('contacts').select('*', { count: 'exact', head: true }),
+        supabase.from('lists').select('*', { count: 'exact', head: true }),
+        supabase.from('email_requests').select('*', { count: 'exact', head: true }),
+        supabase.from('email_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+        supabase.from('tasks').select('*', { count: 'exact', head: true }),
+      ])
+      document.getElementById('globalStats').innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:14px;"><span>👥 Contacts</span><strong>${c1 || 0}</strong></div>
+          <div style="display:flex;justify-content:space-between;font-size:14px;"><span>📋 Listes</span><strong>${c2 || 0}</strong></div>
+          <div style="display:flex;justify-content:space-between;font-size:14px;"><span>✉️ Demandes email (total)</span><strong>${c3 || 0}</strong></div>
+          <div style="display:flex;justify-content:space-between;font-size:14px;"><span>⏳ Emails en attente</span><strong>${c4 || 0}</strong></div>
+          <div style="display:flex;justify-content:space-between;font-size:14px;"><span>📝 Actions enregistrées</span><strong>${c5 || 0}</strong></div>
+        </div>`
+    }
+
+    async function confirmDeleteAll(table) {
+      const names = { contacts: 'TOUS les contacts', lists: 'TOUTES les listes' }
+      if (!confirm(`⚠️ Supprimer ${names[table]} ? Cette action est IRRÉVERSIBLE.`)) return
+      if (!confirm(`Dernière confirmation : supprimer ${names[table]} ?`)) return
+      await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000')
+      showAlert(`${names[table]} supprimés`, 'success')
+      loadStats()
+    }
+
+    async function exportData() {
+      const { data } = await supabase.from('contacts').select('*').order('last_name')
+      if (!data?.length) return showAlert('Aucun contact à exporter')
+      const headers = ['Prénom', 'Nom', 'Poste', 'Email', 'Téléphone 1', 'Téléphone 2', 'Entreprise', 'Ville', 'LinkedIn', 'Site web', 'Créé le']
+      const rows = data.map(c => [c.first_name, c.last_name, c.position, c.email, c.phone_1, c.phone_2, c.company, c.city, c.linkedin_url, c.company_website, new Date(c.created_at).toLocaleDateString('fr-FR')].map(v => `"${v || ''}"`.join ? `"${(v || '').toString().replace(/"/g, '""')}"` : '""'))
+      const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
+      a.download = `contacts_export_${new Date().toISOString().slice(0, 10)}.csv`; a.click()
+      showAlert('Export téléchargé !', 'success')
+    }
+
+    async function init() {
+      const auth = await requireAuth(['admin'])
+      if (!auth) return
+      const { session, profile } = auth
+      document.getElementById('sidebarContainer').innerHTML = renderSidebar(profile, 'admin')
+      document.getElementById('sysInfo').innerHTML = `
+        Base de données : Supabase (West EU)<br>
+        Hébergement : Vercel<br>
+        Dernière mise à jour : ${new Date().toLocaleDateString('fr-FR')}
+      `
+      const notifs = await loadNotifications(session.user.id)
+      if (notifs.length > 0) { document.getElementById('notifCount').textContent = notifs.length; document.getElementById('notifCount').classList.remove('hidden') }
+      loadUsers()
+      loadStats()
+    }
+    init()
+  </script>
+</body>
+</html>
